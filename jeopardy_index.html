@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CSP Directors' Jeopardy!</title>
+    <!-- Tailwind Play CDN (for quick prototypes) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React 18 + ReactDOM 18 (UMD) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel standalone so we can write JSX in-browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  </head>
+  <body class="bg-slate-900 text-slate-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useEffect, useMemo, useRef, useState } = React;
+
+      // ---------------------- Default Content ----------------------
+      const DEFAULT_CONTENT = {
+        title: "CSP Directors' Jeopardy!",
+        categories: [
+          {
+            name: "Company",
+            clues: [
+              { value: 100, question: "Our founding year.", answer: "What is 2017?" },
+              { value: 200, question: "Our largest department.", answer: "What is ____?" },
+              { value: 300, question: "Our mission in 6 words.", answer: "What is ____?" },
+              { value: 400, question: "HQ city.", answer: "What is ____?" },
+              { value: 500, question: "% revenue from top 2 depts.", answer: "What is ~80%?" }
+            ]
+          },
+          {
+            name: "Clients",
+            clues: [
+              { value: 100, question: "A client win last quarter.", answer: "What is ____?" },
+              { value: 200, question: "This school added services.", answer: "What is ____?" },
+              { value: 300, question: "A key client risk now.", answer: "What is ____?" },
+              { value: 400, question: "New market we explored.", answer: "What is ____?" },
+              { value: 500, question: "Retention rate last FY.", answer: "What is ____?" }
+            ]
+          },
+          {
+            name: "Ops & Policy",
+            clues: [
+              { value: 100, question: "Most confusing policy.", answer: "What is ____?" },
+              { value: 200, question: "Form we forget to use.", answer: "What is ____?" },
+              { value: 300, question: "Slowest process today.", answer: "What is ____?" },
+              { value: 400, question: "Tool we should standardize.", answer: "What is ____?" },
+              { value: 500, question: "The biggest ops blocker.", answer: "What is ____?" }
+            ]
+          },
+          {
+            name: "People",
+            clues: [
+              { value: 100, question: "Team morale is at ____.", answer: "What is ____?" },
+              { value: 200, question: "Key role we must hire.", answer: "What is ____?" },
+              { value: 300, question: "Training we all need.", answer: "What is ____?" },
+              { value: 400, question: "Best cross-team habit.", answer: "What is ____?" },
+              { value: 500, question: "A tradition to start.", answer: "What is ____?" }
+            ]
+          },
+          {
+            name: "Trends",
+            clues: [
+              { value: 100, question: "Biggest 12-month trend.", answer: "What is ____?" },
+              { value: 200, question: "Risk we should track.", answer: "What is ____?" },
+              { value: 300, question: "Opportunity in NC.", answer: "What is ____?" },
+              { value: 400, question: "Tech to adopt soon.", answer: "What is ____?" },
+              { value: 500, question: "Market to revisit.", answer: "What is ____?" }
+            ]
+          },
+          {
+            name: "Wildcards",
+            clues: [
+              { value: 100, question: "Director fun fact.", answer: "What is ____?" },
+              { value: 200, question: "Our inside joke.", answer: "What is ____?" },
+              { value: 300, question: "Conference trivia.", answer: "What is ____?" },
+              { value: 400, question: "CSP acronym soup.", answer: "What is ____?" },
+              { value: 500, question: "Epic client moment.", answer: "What is ____?" }
+            ]
+          }
+        ]
+      };
+
+      // ---------------------- Utilities ----------------------
+      const uid = () => Math.random().toString(36).slice(2);
+      const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+
+      const STORAGE_KEYS = {
+        CONTENT: "jeopardy_content_v1",
+        STATE: "jeopardy_state_v1",
+      };
+
+      function useLocalStorage(key, initial) {
+        const [value, setValue] = useState(() => {
+          try {
+            const raw = localStorage.getItem(key);
+            return raw ? JSON.parse(raw) : initial;
+          } catch {
+            return initial;
+          }
+        });
+        useEffect(() => {
+          try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+        }, [key, value]);
+        return [value, setValue];
+      }
+
+      function createInitialState(content) {
+        return {
+          gridUsed: content.categories.map((cat) => cat.clues.map(() => false)),
+          openCell: null,
+          showAnswer: false,
+          teams: [
+            { id: uid(), name: "Team 1", score: 0 },
+            { id: uid(), name: "Team 2", score: 0 },
+          ],
+          buzzerEnabled: true,
+          lockouts: {},
+          timer: { enabled: true, seconds: 15, ticking: false, endsAt: null },
+        };
+      }
+
+      function reconcileStateWithContent(state, content) {
+        const gridUsed = content.categories.map((cat, cIdx) => {
+          const row = state.gridUsed[cIdx] || [];
+          return cat.clues.map((_, qIdx) => row[qIdx] || false);
+        });
+        return { ...state, gridUsed, openCell: null, showAnswer: false };
+      }
+
+      // ---------------------- App ----------------------
+      function App() {
+        const [content, setContent] = useLocalStorage(STORAGE_KEYS.CONTENT, DEFAULT_CONTENT);
+        const [state, setState] = useLocalStorage(STORAGE_KEYS.STATE, createInitialState(content));
+
+        useEffect(() => {
+          setState((s) => reconcileStateWithContent(s, content));
+        }, [content]);
+
+        const [view, setView] = useState("board"); // board | host | edit
+
+        return (
+          <div className="min-h-screen bg-slate-900 text-slate-100">
+            <Header title={content.title} view={view} setView={setView} />
+            {view === "board" && (
+              <BoardView content={content} state={state} setState={setState} />
+            )}
+            {view === "host" && (
+              <HostView content={content} state={state} setState={setState} setContent={setContent} />
+            )}
+            {view === "edit" && (
+              <EditorView content={content} setContent={setContent} />
+            )}
+          </div>
+        );
+      }
+
+      // ---------------------- Header ----------------------
+      function Header({ title, view, setView }) {
+        return (
+          <div className="sticky top-0 z-20 border-b border-slate-800 bg-slate-900/80 backdrop-blur">
+            <div className="mx-auto flex max-w-6xl items-center justify-between p-4">
+              <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
+              <div className="flex items-center gap-2">
+                <button className={btn()} onClick={() => setView("board")}>Board</button>
+                <button className={btn()} onClick={() => setView("host")}>Host</button>
+                <button className={btn()} onClick={() => setView("edit")}>Edit</button>
+                <a className={btn("outline")} href="#" onClick={(e)=>{e.preventDefault(); document.documentElement.requestFullscreen?.();}}>Fullscreen</a>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      function btn(variant = "solid") {
+        const base = "px-3 py-2 rounded-2xl text-sm font-medium transition shadow-sm";
+        const solid = "bg-indigo-500 hover:bg-indigo-400 text-white";
+        const outline = "border border-slate-600 hover:border-indigo-400 text-slate-100";
+        return base + " " + (variant === "solid" ? solid : outline);
+      }
+
+      // ---------------------- Board View ----------------------
+      function BoardView({ content, state, setState }) {
+        const { categories } = content;
+        const { gridUsed } = state;
+
+        return (
+          <div className="mx-auto max-w-6xl p-4">
+            <div className="grid grid-cols-6 gap-2 md:gap-3">
+              {categories.map((cat, cIdx) => (
+                <div key={cIdx} className="rounded-2xl bg-slate-800 shadow">
+                  <div className="p-3 text-center text-sm font-semibold uppercase tracking-wide text-slate-200">
+                    {cat.name}
+                  </div>
+                  <div className="grid grid-rows-5 gap-2 p-2">
+                    {cat.clues.map((clue, qIdx) => (
+                      <Cell
+                        key={qIdx}
+                        value={clue.value}
+                        used={gridUsed?.[cIdx]?.[qIdx]}
+                        onOpen={() => setState((s) => ({ ...s, openCell: { cIdx, qIdx }, showAnswer: false }))}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <ClueModal content={content} state={state} setState={setState} />
+            <ScoreBar state={state} setState={setState} minimal />
+          </div>
+        );
+      }
+
+      function Cell({ value, used, onOpen }) {
+        return (
+          <button
+            disabled={used}
+            onClick={onOpen}
+            className={"aspect-video w-full rounded-xl border border-slate-700 p-2 text-center text-2xl font-extrabold tracking-wide shadow-sm transition " +
+              (used ? "bg-slate-700/50 text-slate-500 line-through" : "bg-indigo-600 hover:bg-indigo-500")
+            }
+          >
+            {!used ? ("$" + value) : "—"}
+          </button>
+        );
+      }
+
+      // ---------------------- Host View ----------------------
+      function HostView({ content, state, setState, setContent }) {
+        return (
+          <div className="mx-auto max-w-6xl p-4">
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="md:col-span-2 rounded-2xl border border-slate-800 bg-slate-900 p-4">
+                <h2 className="mb-3 text-lg font-semibold">Host Controls</h2>
+                <div className="flex flex-wrap gap-2">
+                  <button className={btn()} onClick={() => setState((s) => ({ ...s, buzzerEnabled: !s.buzzerEnabled }))}>
+                    {state.buzzerEnabled ? "Lock Buzzers" : "Unlock Buzzers"}
+                  </button>
+                  <button className={btn("outline")} onClick={() => setState(createInitialState(content))}>Reset Game</button>
+                  <button className={btn("outline")} onClick={() => exportAll(content, state)}>Export State</button>
+                  <label className="inline-flex cursor-pointer items-center gap-2">
+                    <span className="text-sm">Import State</span>
+                    <input type="file" accept="application/json" className="hidden" onChange={(e) => importAll(e, setContent, setState)} />
+                    <span className={btn("outline")}>Choose File</span>
+                  </label>
+                </div>
+
+                <div className="mt-6 grid gap-4 md:grid-cols-2">
+                  <TimerControl state={state} setState={setState} />
+                  <KeyboardHelp teams={state.teams} />
+                </div>
+
+                <div className="mt-6">
+                  <h3 className="mb-2 font-semibold">Open a Clue</h3>
+                  <OpenCluePicker content={content} state={state} setState={setState} />
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
+                <h2 className="mb-3 text-lg font-semibold">Teams & Scores</h2>
+                <TeamManager state={state} setState={setState} />
+              </div>
+            </div>
+
+            <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-4">
+              <h2 className="mb-3 text-lg font-semibold">Live Board Preview</h2>
+              <BoardMini content={content} state={state} />
+            </div>
+
+            <ClueModal content={content} state={state} setState={setState} />
+            <ScoreBar state={state} setState={setState} />
+          </div>
+        );
+      }
+
+      function OpenCluePicker({ content, state, setState }) {
+        return (
+          <div className="grid grid-cols-2 gap-2">
+            {content.categories.map((cat, cIdx) => (
+              <div key={cIdx} className="rounded-xl border border-slate-800 p-3">
+                <div className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-300">{cat.name}</div>
+                <div className="grid grid-cols-5 gap-2">
+                  {cat.clues.map((clue, qIdx) => {
+                    const used = state.gridUsed?.[cIdx]?.[qIdx];
+                    return (
+                      <button
+                        key={qIdx}
+                        disabled={used}
+                        onClick={() => setState((s) => ({ ...s, openCell: { cIdx, qIdx }, showAnswer: false }))}
+                        className={"rounded-lg px-3 py-2 text-sm font-semibold " + (used ? "bg-slate-700/50 text-slate-500" : "bg-indigo-600 hover:bg-indigo-500")}
+                      >
+                        {"$" + clue.value}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      }
+
+      function BoardMini({ content, state }) {
+        return (
+          <div className="grid grid-cols-6 gap-2">
+            {content.categories.map((cat, cIdx) => (
+              <div key={cIdx} className="rounded-xl bg-slate-800">
+                <div className="p-2 text-center text-xs font-semibold uppercase text-slate-300">{cat.name}</div>
+                <div className="grid grid-rows-5 gap-1 p-2">
+                  {cat.clues.map((clue, qIdx) => (
+                    <div
+                      key={qIdx}
+                      className={"rounded-md px-2 py-1 text-center text-xs font-bold " +
+                        (state.gridUsed?.[cIdx]?.[qIdx] ? "bg-slate-700/50 text-slate-500 line-through" : "bg-indigo-600")
+                      }
+                    >
+                      {"$" + clue.value}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      }
+
+      // ---------------------- Editor View ----------------------
+      function EditorView({ content, setContent }) {
+        const [raw, setRaw] = useState(JSON.stringify(content, null, 2));
+        const [err, setErr] = useState("");
+        const apply = () => {
+          try {
+            const next = JSON.parse(raw);
+            if (!next.categories?.length) throw new Error("Content must include categories");
+            setContent(next);
+            setErr("");
+          } catch (e) {
+            setErr(e.message);
+          }
+        };
+        const download = () => {
+          const blob = new Blob([raw], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "jeopardy_content.json";
+          a.click();
+          URL.revokeObjectURL(url);
+        };
+        const upload = (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          file.text().then((t) => setRaw(t));
+        };
+
+        return (
+          <div className="mx-auto max-w-6xl p-4">
+            <div className="mb-3 text-sm text-slate-300">Edit the game content JSON below. Save to apply.</div>
+            <textarea value={raw} onChange={(e)=>setRaw(e.target.value)} className="h-[60vh] w-full rounded-xl border border-slate-800 bg-slate-900 p-3 font-mono text-sm" />
+            {err && <div className="mt-2 text-sm text-rose-400">{err}</div>}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button className={btn()} onClick={apply}>Save</button>
+              <button className={btn("outline")} onClick={download}>Download JSON</button>
+              <label className={btn("outline")}>
+                <span>Upload JSON</span>
+                <input type="file" accept="application/json" className="hidden" onChange={upload} />
+              </label>
+            </div>
+          </div>
+        );
+      }
+
+      // ---------------------- Clue Modal ----------------------
+      function ClueModal({ content, state, setState }) {
+        const open = state.openCell;
+        const ref = useRef(null);
+        const { showAnswer } = state;
+
+        const clue = useMemo(() => {
+          if (!open) return null;
+          const { cIdx, qIdx } = open;
+          return content.categories[cIdx]?.clues[qIdx] || null;
+        }, [open, content]);
+
+        useEffect(() => {
+          if (open) {
+            ref.current?.focus();
+            if (state.timer.enabled) startTimer(setState, state.timer.seconds);
+          } else {
+            stopTimer(setState);
+          }
+        }, [open]);
+
+        useKeyboardBuzzer(state, setState);
+
+        if (!open || !clue) return null;
+
+        const close = () => setState((s) => ({ ...s, openCell: null, showAnswer: false }));
+        const markUsed = () => setState((s) => ({
+          ...s,
+          gridUsed: s.gridUsed.map((col, c) => c === open.cIdx ? col.map((u, q) => (q === open.qIdx ? true : u)) : col),
+          openCell: null,
+          showAnswer: false
+        }));
+
+        return (
+          <div className="fixed inset-0 z-30 grid place-items-center bg-black/70 p-4">
+            <div
+              ref={ref}
+              tabIndex={-1}
+              className="w-full max-w-3xl rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-xl outline-none"
+            >
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-sm font-semibold uppercase tracking-wide text-slate-300">
+                  {content.categories[open.cIdx]?.name} · {"$" + clue.value}{clue.dailyDouble ? " · Daily Double" : ""}
+                </div>
+                <button className={btn("outline")} onClick={close}>Close</button>
+              </div>
+
+              <div className="min-h-[8rem] select-none rounded-xl bg-slate-800 p-4 text-center text-2xl font-bold">
+                {!showAnswer ? clue.question : clue.answer}
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <button className={btn()} onClick={() => setState((s) => ({ ...s, showAnswer: !s.showAnswer }))}>
+                  {showAnswer ? "Hide Answer" : "Reveal Answer"}
+                </button>
+                <button className={btn("outline")} onClick={markUsed}>Mark Used</button>
+                <button className={btn("outline")} onClick={() => startTimer(setState, state.timer.seconds)}>Restart Timer</button>
+              </div>
+
+              <div className="mt-6">
+                <AwardPanel clue={clue} state={state} setState={setState} />
+              </div>
+
+              <TimerDisplay timer={state.timer} />
+            </div>
+          </div>
+        );
+      }
+
+      function AwardPanel({ clue, state, setState }) {
+        const award = (teamId, delta) => {
+          setState((s) => ({
+            ...s,
+            teams: s.teams.map((t) => (t.id === teamId ? { ...t, score: t.score + delta } : t)),
+          }));
+        };
+
+        return (
+          <div>
+            <div className="mb-2 text-sm font-semibold">Award/Subtract Points</div>
+            <div className="flex flex-wrap gap-2">
+              {state.teams.map((t) => (
+                <div key={t.id} className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900 p-2">
+                  <span className="min-w-[6rem] truncate text-sm">{t.name}</span>
+                  <button className={btn()} onClick={() => award(t.id, clue.value)}>
+                    {"+" + clue.value}
+                  </button>
+                  <button className={btn("outline")} onClick={() => award(t.id, -clue.value)}>
+                    {"-" + clue.value}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      }
+
+      function TimerControl({ state, setState }) {
+        const s = state.timer.seconds;
+        return (
+          <div className="rounded-xl border border-slate-800 p-3">
+            <div className="mb-2 text-sm font-semibold">Timer</div>
+            <div className="flex items-center gap-2">
+              <button className={btn("outline")} onClick={() => setState((st)=>({ ...st, timer: { ...st.timer, seconds: clamp(s-1, 3, 60) }}))}>-</button>
+              <span className="w-12 text-center">{s}s</span>
+              <button className={btn("outline")} onClick={() => setState((st)=>({ ...st, timer: { ...st.timer, seconds: clamp(s+1, 3, 60) }}))}>+</button>
+              <label className="ml-3 inline-flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={state.timer.enabled} onChange={(e)=> setState((st)=>({ ...st, timer: { ...st.timer, enabled: e.target.checked }}))} />
+                Enable
+              </label>
+            </div>
+          </div>
+        );
+      }
+
+      function TimerDisplay({ timer }) {
+        const [remaining, setRemaining] = useState(null);
+        useEffect(() => {
+          if (!timer.ticking || !timer.endsAt) { setRemaining(null); return; }
+          const id = setInterval(() => {
+            const now = Date.now();
+            const diff = Math.max(0, Math.ceil((timer.endsAt - now) / 1000));
+            setRemaining(diff);
+          }, 200);
+          return () => clearInterval(id);
+        }, [timer.ticking, timer.endsAt]);
+
+        if (!timer.ticking) return null;
+        return (
+          <div className="mt-4 text-center text-sm text-slate-300">⏳ {remaining ?? timer.seconds}s</div>
+        );
+      }
+
+      function startTimer(setState, seconds) {
+        setState((s) => ({ ...s, timer: { ...s.timer, ticking: true, endsAt: Date.now() + seconds * 1000 } }));
+      }
+      function stopTimer(setState) {
+        setState((s) => ({ ...s, timer: { ...s.timer, ticking: false, endsAt: null } }));
+      }
+
+      function KeyboardHelp({ teams }) {
+        return (
+          <div className="rounded-xl border border-slate-800 p-3">
+            <div className="mb-2 text-sm font-semibold">Keyboard Buzzers</div>
+            <div className="text-sm text-slate-300">Press 1–8 for Team 1–8. Space toggles Lock/Unlock. While locked, no one can buzz.</div>
+            <ol className="mt-2 list-inside list-decimal text-sm text-slate-300">
+              {teams.map((t, i) => (
+                <li key={t.id}>{t.name} → key {i+1}</li>
+              ))}
+            </ol>
+          </div>
+        );
+      }
+
+      function useKeyboardBuzzer(state, setState) {
+        const { buzzerEnabled, teams, lockouts } = state;
+        useEffect(() => {
+          const onKey = (e) => {
+            if (!state.openCell) return; // only while a clue is open
+            if (e.code === "Space") {
+              e.preventDefault();
+              setState((s)=>({ ...s, buzzerEnabled: !s.buzzerEnabled }));
+              return;
+            }
+            if (!buzzerEnabled) return;
+            const idx = parseInt(e.key, 10);
+            if (!Number.isFinite(idx) || idx < 1 || idx > 8) return;
+            const team = teams[idx-1];
+            if (!team) return;
+            const lockoutUntil = lockouts[team?.id] || 0;
+            if (Date.now() < lockoutUntil) return;
+            setState((s)=>({ ...s, buzzerEnabled: false }));
+          };
+          window.addEventListener("keydown", onKey);
+          return () => window.removeEventListener("keydown", onKey);
+        }, [buzzerEnabled, teams, lockouts, setState, state.openCell]);
+      }
+
+      // ---------------------- Teams ----------------------
+      function TeamManager({ state, setState }) {
+        const addTeam = () => setState((s)=> ({ ...s, teams: [...s.teams, { id: uid(), name: \`Team \${s.teams.length+1}\`, score: 0 }] }));
+        const removeTeam = (id) => setState((s)=> ({ ...s, teams: s.teams.filter(t=>t.id!==id) }));
+        const rename = (id, name) => setState((s)=> ({ ...s, teams: s.teams.map(t=> t.id===id ? { ...t, name } : t) }));
+        const resetScores = () => setState((s)=> ({ ...s, teams: s.teams.map(t=> ({ ...t, score: 0 })) }));
+
+        const sorted = [...state.teams].sort((a,b)=> b.score - a.score);
+
+        return (
+          <div>
+            <div className="mb-2 flex flex-wrap gap-2">
+              <button className={btn()} onClick={addTeam}>Add Team</button>
+              <button className={btn("outline")} onClick={resetScores}>Reset Scores</button>
+            </div>
+            <div className="grid gap-2">
+              {sorted.map((t, idx) => (
+                <div key={t.id} className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900 p-2">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-sm">{idx+1}</span>
+                    <input
+                      className="w-40 rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-sm"
+                      value={t.name}
+                      onChange={(e)=>rename(t.id, e.target.value)}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-[3rem] text-right font-mono">{t.score}</span>
+                    <button className={btn("outline")} onClick={()=>removeTeam(t.id)}>Remove</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      }
+
+      function ScoreBar({ state, setState, minimal=false }) {
+        const teams = [...state.teams].sort((a,b)=> b.score - a.score);
+        return (
+          <div className="fixed bottom-0 left-0 right-0 z-10 border-t border-slate-800 bg-slate-900/90 backdrop-blur">
+            <div className="mx-auto flex max-w-6xl items-center gap-2 overflow-x-auto p-2">
+              {teams.map((t, i) => (
+                <div key={t.id} className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
+                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-800 text-xs">{i+1}</span>
+                  <span className="min-w-[6rem] truncate text-sm">{t.name}</span>
+                  <span className="font-mono">{t.score}</span>
+                </div>
+              ))}
+              {!minimal && (
+                <div className="ml-auto flex items-center gap-2 text-xs text-slate-400">
+                  <span>Buzzers: </span>
+                  <span className={"font-semibold " + (state.buzzerEnabled ? "text-emerald-400" : "text-rose-400")}>
+                    {state.buzzerEnabled ? "UNLOCKED" : "LOCKED"}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      // ---------------------- Export/Import ----------------------
+      function exportAll(content, state) {
+        const payload = { content, state };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json"});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "jeopardy_state_export.json";
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+
+      function importAll(e, setContent, setState) {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        file.text().then((txt) => {
+          try {
+            const obj = JSON.parse(txt);
+            if (obj.content) setContent(obj.content);
+            if (obj.state) setState(obj.state);
+          } catch (err) {
+            alert("Invalid JSON");
+          }
+        });
+      }
+
+      // Render App
+      const root = ReactDOM.createRoot(document.getElementById("root"));
+      root.render(<App />);
+    </script>
+  </body>
+</html>
