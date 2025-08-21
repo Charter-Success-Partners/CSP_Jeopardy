@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Jeopardy Game</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>Jeopardy!</h1>
+  <div id="game-board"></div>
+
+  <!-- Modal for displaying questions -->
+  <div id="modal" class="modal">
+    <div class="modal-content">
+      <span id="close">&times;</span>
+      <div id="modal-question"></div>
+      <input id="modal-answer" placeholder="Your answer...">
+      <button id="submit-answer">Submit</button>
+      <div id="feedback"></div>
+    </div>
+  </div>
+
+  <script src="game-data.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
